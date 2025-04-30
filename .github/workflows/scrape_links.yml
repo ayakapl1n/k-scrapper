@@ -1,36 +1,43 @@
-name: Scrape Kolesa Links
+name: Scrape & Commit Links
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write   # важно, чтобы workflow мог пушить
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo (with write access)
         uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Install Playwright browsers
-        run: |
-          python -m playwright install --with-deps
+          playwright install --with-deps
 
       - name: Run scraper
         run: python links.py
 
-      - name: Upload scraped links
-        uses: actions/upload-artifact@v4
-        with:
-          name: scraped-links
-          path: |
-            links.csv
+      - name: Commit & Push results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add links_playwright.csv checkpoint.txt
+          if ! git diff --staged --quiet; then
+            git commit -m "ci: update scraped links and checkpoint"
+            git push
+          else
+            echo "No changes to commit."
+          fi
