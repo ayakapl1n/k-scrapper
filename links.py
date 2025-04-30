@@ -1,107 +1,127 @@
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout, Error as PlaywrightError
+import os
+import time
+import random
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from urllib.parse import urljoin
-import csv, os, sys
 
-# ——— Константы ———
-START_URL       = "https://kolesa.kz/cars/almaty/"
-OUTPUT_CSV      = "links.csv"
-CHECKPOINT_FILE = "checkpoint.txt"
-MAX_PAGES       = 1000
-LIST_SEL        = "div.a-list"
-LINK_SEL        = "a.a-card__link"
+# ——— Параметры ———
+START_URL                  = "https://kolesa.kz/cars/"
+OUTPUT_CSV                 = "url.csv"
+MAX_PAGES                  = 5000  # поставьте нужное вам число или None
+AD_LINK_SELECTOR           = "a.a-card__link"
+NEXT_PAGE_SELECTOR         = "a.next_page"
+AD_LIST_CONTAINER_SELECTOR = "div.a-list"
 
-# ——— Подготовка файлов ———
-os.makedirs(os.path.dirname(OUTPUT_CSV) or ".", exist_ok=True)
-if not os.path.exists(OUTPUT_CSV):
-    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow(["url"])
+# создаём папку для CSV
+os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
 
-# читаем, с какой страницы стартовать
-if os.path.exists(CHECKPOINT_FILE):
-    with open(CHECKPOINT_FILE, "r", encoding="utf-8") as f:
-        last = f.read().strip()
-        start_page = int(last) + 1 if last.isdigit() else 1
-else:
-    start_page = 1
+# держим все ссылки тут
+all_urls = set()
 
-# загружаем уже собранные ссылки, чтобы не дублировать
-seen = set()
-with open(OUTPUT_CSV, "r", encoding="utf-8") as f:
-    reader = csv.reader(f)
-    next(reader, None)
-    for row in reader:
-        if row:
-            seen.add(row[0])
+# настройка Chrome
+chrome_options = ChromeOptions()
+chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--headless")                # запускаем без GUI
+chrome_options.add_argument("--window-size=1280,800")
+chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+chrome_options.add_argument("--disable-dev-shm-usage")
+chrome_options.add_argument(f"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/108.0.0.0 Safari/537.36")
 
-# ——— Основной код скрапера ———
-def main():
-    try:
-        pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=True)
-        page = browser.new_page()
-        # блокируем ресурсы, чтобы ускорить загрузку
-        page.route("**/*", lambda route, req: 
-            route.abort() if req.resource_type in ("image","stylesheet","font") 
-            else route.continue_()
-        )
+driver = None
 
-        with open(OUTPUT_CSV, "a", newline="", encoding="utf-8") as csvfile:
-            writer = csv.writer(csvfile)
+try:
+    print("Setting up WebDriver...")
+    service = ChromeService(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    # убираем признак automation
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    print("WebDriver setup complete.")
 
-            for pg in range(start_page, MAX_PAGES + 1):
-                url = START_URL if pg == 1 else urljoin(START_URL, f"?page={pg}")
-                print(f"[Page {pg}] → {url}")
+    current_url = START_URL
+    page_count = 0
 
-                # навигация + ожидание контейнера
-                try:
-                    page.goto(url, timeout=30_000, wait_until="domcontentloaded")
-                    page.wait_for_selector(LIST_SEL, timeout=5_000)
-                except (PlaywrightTimeout, PlaywrightError) as e:
-                    print(f"  ⚠️ Ошибка на странице {pg}: {e!r}. Пропускаем.")
-                    # сохраняем чекпоинт и идём дальше
-                    with open(CHECKPOINT_FILE, "w", encoding="utf-8") as f:
-                        f.write(str(pg))
-                    continue
-                except Exception as e:
-                    print(f"  🚨 Неожиданная ошибка на {pg}: {e!r}. Пропускаем.")
-                    with open(CHECKPOINT_FILE, "w", encoding="utf-8") as f:
-                        f.write(str(pg))
-                    continue
+    while current_url and (MAX_PAGES is None or page_count < MAX_PAGES):
+        page_count += 1
+        print(f"Scraping page {page_count}: {current_url}")
+        driver.get(current_url)
+        # даём время подгрузиться динамике
+        time.sleep(random.uniform(2, 4))
 
-                # собственно сбор ссылок
-                try:
-                    hrefs = page.locator(LINK_SEL).evaluate_all(
-                        "els => els.map(e => e.href.split('?')[0])"
-                    )
-                except Exception as e:
-                    print(f"  ⚠️ Не удалось собрать ссылки на {pg}: {e!r}. Пропускаем.")
-                    with open(CHECKPOINT_FILE, "w", encoding="utf-8") as f:
-                        f.write(str(pg))
-                    continue
-
-                new = 0
-                for h in hrefs:
-                    if h.startswith("https://kolesa.kz/a/show/") and h not in seen:
-                        seen.add(h)
-                        writer.writerow([h])
-                        new += 1
-
-                print(f"  ➕ {new} новых (всего {len(seen)})")
-                # обновляем checkpoint
-                with open(CHECKPOINT_FILE, "w", encoding="utf-8") as f:
-                    f.write(str(pg))
-
-    finally:
-        # Закрываем браузер, даже если был fatal error
         try:
-            browser.close()
-            pw.stop()
-        except:
-            pass
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, AD_LIST_CONTAINER_SELECTOR))
+            )
 
-    print(f"Готово: всего {len(seen)} ссылок, последний page={pg}")
+            ad_elements = driver.find_elements(By.CSS_SELECTOR, AD_LINK_SELECTOR)
+            found_on_page = 0
+            for elem in ad_elements:
+                href = elem.get_attribute("href")
+                if href:
+                    absolute_url = urljoin(START_URL, href)
+                    if absolute_url.startswith("https://kolesa.kz/a/show/"):
+                        cleaned_url = absolute_url.split('?')[0]
+                        if cleaned_url not in all_urls:
+                            all_urls.add(cleaned_url)
+                            found_on_page += 1
 
-if __name__ == "__main__":
-    main()
-    # гарантируем код возврата 0, чтобы GitHub Actions перешёл к шагу Commit & Push
-    sys.exit(0)
+            print(f"  Found {found_on_page} ad links on this page. Total unique URLs: {len(all_urls)}")
+
+            # пагинация
+            try:
+                next_btn = driver.find_element(By.CSS_SELECTOR, NEXT_PAGE_SELECTOR)
+                if next_btn.is_enabled() and next_btn.is_displayed():
+                    href = next_btn.get_attribute("href")
+                    if href:
+                        current_url = urljoin(current_url, href)
+                    else:
+                        next_btn.click()
+                        time.sleep(2)
+                        current_url = driver.current_url
+                        if page_count >= MAX_PAGES or not current_url:
+                            current_url = None
+                else:
+                    print("  No more pages.")
+                    break
+            except NoSuchElementException:
+                print("  Next‐page button not found, ending.")
+                break
+
+        except TimeoutException:
+            print("  Timeout waiting for ads container, skipping page.")
+            # пропускаем страницу, но продолжаем цикл
+            current_url = None
+        except Exception as e:
+            print(f"  Error on page {current_url}: {e}")
+            current_url = None
+
+except WebDriverException as e_wd:
+    print(f"WebDriverException: {e_wd}")
+except Exception as e:
+    print(f"Unexpected error: {e}")
+    import traceback; traceback.print_exc()
+finally:
+    if driver:
+        print("Closing WebDriver.")
+        driver.quit()
+
+# сохраняем результат
+if all_urls:
+    print(f"\nFound a total of {len(all_urls)} unique URLs.")
+    df = pd.DataFrame(sorted(all_urls), columns=['url'])
+    df.to_csv(OUTPUT_CSV, index=False, encoding='utf-8')
+    print(f"URLs saved to {OUTPUT_CSV}")
+else:
+    print("No URLs collected.")
+
+print("Script finished.")
