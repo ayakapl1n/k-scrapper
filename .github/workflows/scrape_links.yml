@@ -2,41 +2,68 @@ name: Scrape & Commit Links
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
 
 permissions:
-  contents: write   # важно, чтобы workflow мог пушить
+  contents: write
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo (with write access)
+      - name: Checkout repo
         uses: actions/checkout@v3
         with:
           persist-credentials: true
 
+      # Cache pip downloads
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # Cache Playwright browsers
+      - name: Cache Playwright browsers
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-browsers
+          restore-keys: |
+            ${{ runner.os }}-playwright-browsers
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.x'
+          python-version: '3.13'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install --with-deps
+
+      - name: Install Playwright browsers
+        run: python -m playwright install --with-deps
+
+      - name: Debug FS
+        run: |
+          echo "Working dir: $(pwd)"
+          ls -R .
 
       - name: Run scraper
-        run: python links.py
+        run: python -u links.py
 
       - name: Commit & Push results
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add links_playwright.csv checkpoint.txt
+          git add links.csv checkpoint.txt
           if ! git diff --staged --quiet; then
-            git commit -m "ci: update scraped links and checkpoint"
+            git commit -m "ci: update scraped links and checkpoint 🚀"
             git push
           else
             echo "No changes to commit."
