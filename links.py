@@ -20,8 +20,7 @@ AD_LINK_SELECTOR           = "a.a-card__link"
 NEXT_PAGE_SELECTOR         = "a.next_page"
 AD_LIST_CONTAINER_SELECTOR = "div.a-list"
 
-# создаём папку для CSV
-os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+os.makedirs(os.path.dirname(OUTPUT_CSV) or ".", exist_ok=True)
 
 # держим все ссылки тут
 all_urls = set()
