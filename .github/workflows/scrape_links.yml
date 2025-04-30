@@ -1,0 +1,35 @@
+name: Scrape Kolesa Links
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Установить браузеры для Playwright
+          playwright install --with-deps
+
+      - name: Run scraper script
+        # предполагается, что links.py или основной скрипт называется именно так
+        run: python links.py
+
+      - name: Upload scraped links
+        uses: actions/upload-artifact@v3
+        with:
+          name: scraped-links
+          path: |
+            links.csv
