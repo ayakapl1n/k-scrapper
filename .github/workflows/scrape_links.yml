@@ -2,8 +2,6 @@ name: Scrape Kolesa with Selenium
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 3 * * *'  # каждый день в 03:00 UTC
 
 permissions:
   contents: write
@@ -39,13 +37,13 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run scraper
-        run: python links_selenium.py
+        run: python links.py
 
       - name: Commit & Push CSV
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/kolesa_almaty_found_urls.csv
+          git add url.csv
           if git diff --quiet --exit-code; then
             echo "No changes to commit"
           else
